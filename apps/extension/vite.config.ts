@@ -7,7 +7,10 @@ import zip from 'vite-plugin-zip-pack'
 import manifest from './manifest.config.js'
 import pkg from './package.json' with { type: 'json' }
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // CRXJS emits development files too. Keep HMR from overwriting the installed
+  // production worker/manifest while a voice session or verification is running.
+  build: { outDir: command === 'serve' ? 'dist-dev' : 'dist' },
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
@@ -34,4 +37,4 @@ export default defineConfig({
       ],
     },
   },
-})
+}))

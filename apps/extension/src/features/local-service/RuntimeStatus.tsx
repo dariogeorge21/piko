@@ -9,17 +9,17 @@ import { publishConnection, useConnectionState } from './connection.store'
 const errors: Record<ConnectionError, string> = {
   'service-unavailable': 'The companion service is unavailable. Start it on 127.0.0.1:8765, then check again.',
   timeout: 'The local service request timed out. Check that the service is responding.',
-  'pairing-rejected': 'Pairing was rejected. The code may be incorrect, expired, or consumed. Restart the service for a fresh code.',
-  'rate-limited': 'Too many pairing attempts. Wait 60 seconds before trying again.',
-  'session-expired': 'The session expired or the service restarted. Pair again with a fresh terminal code.',
+  'pairing-rejected': 'Connection was rejected by the service. Ensure the companion service is running.',
+  'rate-limited': 'Too many connection attempts. Wait a moment before trying again.',
+  'session-expired': 'The session ended or the service restarted. Connect again to resume.',
   'invalid-response': 'The service returned an invalid response. Check the companion version before retrying.',
   'unsupported-protocol': 'The service uses an unsupported protocol version. Update the extension and companion together.',
-  'unsupported-origin': 'The service rejected this extension origin. Restart the companion and pair this extension again.',
-  'disconnect-unconfirmed': 'Disconnected locally; server revocation is not confirmed. Keep this browser session open and retry disconnect, or restart the companion. The saved credential is restricted to revocation.',
+  'unsupported-origin': 'The service rejected this extension origin. Restart the companion.',
+  'disconnect-unconfirmed': 'Disconnected locally. You can reconnect anytime.',
   busy: 'A connection operation is already running. Wait for it to finish.',
-  'storage-unavailable': 'Temporary extension session storage is unavailable. Reload the extension before pairing.',
+  'storage-unavailable': 'Temporary extension session storage is unavailable. Reload the extension before connecting.',
 }
-const titles = { disconnected: 'Local runtime not connected', available: 'Companion available · not paired', paired: 'Companion paired', expired: 'Companion session expired', unavailable: 'Companion unavailable' }
+const titles = { disconnected: 'Local companion disconnected', available: 'Companion available', paired: 'Companion connected', expired: 'Companion disconnected', unavailable: 'Companion unavailable' }
 export function RuntimeStatus() {
   const state = useConnectionState()
   const [busy, setBusy] = useState(false)
@@ -46,12 +46,12 @@ export function RuntimeStatus() {
     return () => { clearInterval(timer); clearTimeout(expiry) }
   }, [state.status, state.expiresAt, act])
   return <section aria-label="Local companion connection" className="space-y-3">
-    <Alert role="status" aria-live="polite" className="border-emerald-950/10 bg-emerald-950/5">
-      <PlugZap aria-hidden="true" className="size-4" />
-      <AlertTitle>{titles[state.status]}</AlertTitle>
-      <AlertDescription className="text-xs leading-5">{busy ? 'Checking local connection…' : 'Voice input, interpretation and optional spoken responses use your paired local companion. Text remains available.'}</AlertDescription>
+    <Alert role="status" aria-live="polite" className="border-emerald-950/15 bg-white/90 shadow-2xs rounded-xl p-3.5">
+      <PlugZap aria-hidden="true" className={`size-4 ${state.status === 'paired' ? 'text-emerald-700' : 'text-amber-600'}`} />
+      <AlertTitle className="font-semibold text-emerald-950">{titles[state.status]}</AlertTitle>
+      <AlertDescription className="text-xs leading-5 text-muted-foreground">{busy ? 'Checking local connection…' : 'Voice input, interpretation and optional spoken responses use your local companion. Text remains available.'}</AlertDescription>
     </Alert>
-    {state.error && <p role="alert" className="text-xs leading-5 text-destructive">{errors[state.error]}</p>}
+    {state.error && <p role="alert" className="text-xs leading-5 text-destructive font-medium px-1">{errors[state.error]}</p>}
     <PairingPanel state={state} busy={busy} act={act} />
   </section>
 }

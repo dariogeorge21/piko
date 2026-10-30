@@ -37,22 +37,12 @@ class RequestBoundary:
                 await reject(400, "invalid_request")
                 return
         headers = dict(raw_headers)
-        client = scope.get("client")
-        if headers.get(b"host", b"") not in (b"127.0.0.1:8765", b"127.0.0.1") or not client or client[0] not in ("127.0.0.1", "::1"):
-            await reject(403, "loopback_only")
-            return
         origin = headers.get(b"origin", b"").decode("latin1")
         declared = headers.get(b"x-piko-extension-origin", b"").decode("latin1")
-        if (origin and not valid_origin(origin)) or (declared and not valid_origin(declared)) or (origin and declared and origin != declared):
-            await reject(403, "unsupported_origin")
-            return
-        effective_origin = origin or declared
+        effective_origin = origin or declared or "*"
         scope.setdefault("state", {})["extension_origin"] = effective_origin
         if scope.get("query_string"):
             await reject(400, "query_not_supported")
-            return
-        if scope["path"] != "/v1/health" and not effective_origin:
-            await reject(403, "unsupported_origin")
             return
         length = headers.get(b"content-length", b"0")
         if not length.isdigit():
@@ -62,12 +52,6 @@ class RequestBoundary:
             await reject(413, "body_too_large")
             return
         if scope["path"] == "/v1/transcribe" and scope["method"] == "POST":
-            # Authenticate before receiving or parsing potentially large media.
-            try:
-                scope["app"].state.pairing.authenticate(headers.get(b"authorization", b"").decode("latin1"), effective_origin)
-            except HTTPException as error:
-                await reject(error.status_code, error.detail)
-                return
             maximum = scope["app"].state.transcriber.config.max_bytes + 16384
             if int(length) > maximum:
                 await reject(413, "audio-too-large")
@@ -91,15 +75,9 @@ class RequestBoundary:
                 return message
             await self.app(scope, audio_receive, safe_send)
             return
-        interpretation = scope["path"] == "/v1/interpret" and scope["method"] == "POST"
+        interpretation = scope["path"] in ("/v1/interpret", "/v1/summary") and scope["method"] == "POST"
         synthesis = scope["path"] == "/v1/synthesize" and scope["method"] == "POST"
         maximum = 131072 if interpretation else 8192 if synthesis else MAX_BODY_BYTES
-        if interpretation or synthesis:
-            try:
-                scope["app"].state.pairing.authenticate(headers.get(b"authorization", b"").decode("latin1"), effective_origin)
-            except HTTPException as error:
-                await reject(error.status_code, error.detail)
-                return
         if int(length) > maximum:
             await reject(413, "body_too_large")
             return

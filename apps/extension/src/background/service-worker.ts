@@ -62,11 +62,12 @@ async function interpret(message: InterpretMessage): Promise<InterpretReply> {
   const controller = new AbortController()
   const session = sessions.get(message.tabId)
   try {
+    const currentFields = session ? session.inventory.forms.flatMap(form => form.fields).filter(field => !message.focusFieldId || field.fieldId === message.focusFieldId) : []
     if (!session || session.scanId !== message.payload.scanId || !message.workflow && message.payload.knownFacts.length ||
-        JSON.stringify(message.payload.fields) !== JSON.stringify(eligibleMetadata(session.inventory.forms.flatMap(form => form.fields)))) throw new InterpretationError('stale-scan')
+        message.focusFieldId && currentFields.length !== 1 || JSON.stringify(message.payload.fields) !== JSON.stringify(eligibleMetadata(currentFields))) throw new InterpretationError('stale-scan')
     if (message.workflow) {
       const stored = await facts.matches(message.workflow, session.inventory.origin)
-      if (!stored || JSON.stringify(message.payload.knownFacts) !== JSON.stringify(relevantFacts(session.inventory.forms.flatMap(form => form.fields), stored))) throw new InterpretationError('session-expired')
+      if (!stored || JSON.stringify(message.payload.knownFacts) !== JSON.stringify(relevantFacts(currentFields, stored))) throw new InterpretationError('session-expired')
     }
     if (interpreting.has(message.requestId)) throw new InterpretationError('interpretation-busy')
     interpreting.set(message.requestId, { tabId: message.tabId, controller })
@@ -86,6 +87,25 @@ async function interpret(message: InterpretMessage): Promise<InterpretReply> {
   } finally {
     if (interpreting.get(message.requestId)?.controller === controller) interpreting.delete(message.requestId)
   }
+}
+
+async function summarize(message: SummaryMessage) {
+  const controller = new AbortController(), session = sessions.get(message.tabId)
+  try {
+    if (!session || session.scanId !== message.payload.scanId || JSON.stringify(message.payload.fields) !== JSON.stringify(eligibleMetadata(session.inventory.forms.flatMap(form => form.fields)))) throw new InterpretationError('stale-scan')
+    const current = async () => {
+      if (controller.signal.aborted || sessions.get(message.tabId) !== session) throw new InterpretationError('stale-scan')
+      const proof: unknown = await chrome.tabs.sendMessage(message.tabId, { type: 'PIKO_SCAN_CURRENT', scanId: session.scanId, documentId: session.documentId }, { documentId: session.chromeDocumentId })
+      if (!isRecord(proof) || proof.current !== true || sessions.get(message.tabId) !== session) throw new InterpretationError('stale-scan')
+    }
+    if (interpreting.has(message.requestId)) throw new InterpretationError('interpretation-busy')
+    interpreting.set(message.requestId, { tabId: message.tabId, controller })
+    await current()
+    const result = await connection.summarize(message.payload, controller.signal)
+    await current()
+    return { ok: true, requestId: message.requestId, result }
+  } catch (error) { return { ok: false, requestId: message.requestId, error: error instanceof InterpretationError ? error.code : 'service-unavailable' } }
+  finally { if (interpreting.get(message.requestId)?.controller === controller) interpreting.delete(message.requestId) }
 }
 
 function release(tabId: number, session: Session) {
@@ -191,6 +211,7 @@ async function sessionRequest(message: SessionRequest): Promise<SessionReply> {
     if (sessions.get(message.tabId) !== live || !isRecord(proof) || proof.current !== true) return { ok: false, requestId: message.requestId, error: 'stale-scan' }
     const previous = await facts.status()
     const session = await facts.ensure(live.inventory.origin)
+    if (sessions.get(message.tabId) !== live) return { ok: false, requestId: message.requestId, error: 'stale-scan' }
     if (previous && previous.sessionId !== session.sessionId) {
       for (const tabId of [...sessions.keys()]) if (tabId !== message.tabId) invalidate(tabId, 'changed')
       void chrome.runtime.sendMessage({ type: 'PIKO_SESSION_CLEARED', sessionId: previous.sessionId }).catch(() => {})
@@ -200,6 +221,7 @@ async function sessionRequest(message: SessionRequest): Promise<SessionReply> {
 }
 
 chrome.runtime.onMessage.addListener((message: unknown, sender, respond) => {
+  if (isSummaryMessage(message) && fromPanel(sender)) { void summarize(message).then(respond); return true }
   if (isSessionRequest(message) && fromPanel(sender)) {
     void sessionRequest(message).then(respond)
     return true
@@ -246,3 +268,4 @@ chrome.tabs.onActivated.addListener(({ tabId }) => {
   for (const id of new Set([...sessions.keys(), ...pending.keys()])) if (id !== tabId) invalidate(id, 'tab-switched')
   void chrome.runtime.sendMessage({ type: 'PIKO_SCAN_TAB_ACTIVATED', tabId }).catch(() => {})
 })
+import { isSummaryMessage, type SummaryMessage } from '../features/assistant/form-summary'

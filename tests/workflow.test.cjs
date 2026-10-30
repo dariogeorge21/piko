@@ -8,7 +8,7 @@ const {AssistantOrchestrator}=load(path.join(root,'features/assistant/assistant.
 const {initialWorkflow,workflowReducer}=load(path.join(root,'features/assistant/workflow.reducer.ts'));
 const {canTransition,canApprove}=load(path.join(root,'features/assistant/workflow-guards.ts'));
 const {questionQueue}=load(path.join(root,'features/assistant/question-queue.ts'));
-const {relevantFacts,reusableDrafts}=load(path.join(root,'features/assistant/conversation-selectors.ts'));
+const {relevantFacts,reusableDrafts,validDraft}=load(path.join(root,'features/assistant/conversation-selectors.ts'));
 const {factKey,factValue,isSessionSnapshot}=load(path.join(root,'features/assistant/session-facts.validation.ts'));
 const {FACT_TTL_MS,WORKFLOW_SESSION_KEY}=load(path.join(root,'features/assistant/session-facts.types.ts'));
 const id=(prefix,n)=>`${prefix}_${n.toString(16).padStart(32,'0')}`;
@@ -103,4 +103,41 @@ test('reused facts remap current option IDs, remain unselected, and never target
  const f={...field(3,'Department','select'),options:[{optionId:id('option',3),label:'Computer Science',disabled:false}]};
  const drafts=reusableDrafts([f,{...f,fieldId:id('field',4),eligible:false}],s);assert.equal(drafts[f.fieldId].text,id('option',3));assert.equal(drafts[f.fieldId].selected,false);assert.equal(drafts[id('field',4)],undefined);
  assert.equal(relevantFacts([f],s).length,1);assert.equal(relevantFacts([fields[0]],s).length,0);
+});
+
+test('speech rejection keeps questions usable and transport failures preserve manual recovery',async()=>{
+ const s=setup({speak:async()=>{throw Error('PRIVATE voice diagnostic');},fill:async()=>{throw Error('PRIVATE transport diagnostic');}});
+ await s.controller.scan();await new Promise(setImmediate);assert.equal(s.controller.snapshot().stage,'collecting');assert.equal(questionQueue(s.controller.snapshot()).length,2);
+ s.controller.transcript('Synthetic edited text');s.controller.edit(fields[0].fieldId,{text:'Alex Thomas',selected:true});await s.controller.review();assert.equal(s.controller.snapshot().error,'fill-unavailable');assert.equal(s.controller.snapshot().transcript,'Synthetic edited text');assert.equal(s.controller.snapshot().drafts[fields[0].fieldId].text,'Alex Thomas');s.controller.recover();assert.equal(s.controller.snapshot().stage,'collecting');s.controller.dispose();
+});
+test('transport loss after approval reports an unknown outcome without retrying the batch',async()=>{
+ let commits=0;const s=setup({fill:async(request,items)=>{if(request.type==='PIKO_FILL_REVIEW')return{ok:true,reviewId:id('review',1),expiresAt:Date.now()+60000,preflight:{ok:true,results:items.map(i=>({fieldId:i.fieldId,status:'not-verified'}))}};commits++;throw Error('PRIVATE diagnostic');}});await s.controller.scan();s.controller.edit(fields[0].fieldId,{text:'Alex Thomas',selected:true});await s.controller.review();s.controller.approveCheckbox(true);
+ await s.controller.fill();assert.equal(s.controller.snapshot().stage,'error');assert.equal(s.controller.snapshot().error,'fill-unavailable');assert.equal(s.controller.snapshot().review,null);assert.equal(s.controller.snapshot().drafts[fields[0].fieldId].text,'Alex Thomas');await s.controller.fill();assert.equal(commits,1);s.controller.dispose();
+});
+test('scanning waits for a pending clear so an old clear cannot remove a new session',async()=>{
+ let finish,scans=0;const s=setup({clear:()=>new Promise(resolve=>{finish=resolve;}),scan:async()=>{scans++;return scan();}});
+ await s.controller.scan();const clearing=s.controller.clearSession();const scanning=s.controller.scan();await new Promise(setImmediate);assert.equal(scans,1);finish();await Promise.all([clearing,scanning]);assert.equal(scans,2);assert.equal(s.controller.snapshot().stage,'collecting');s.controller.dispose();
+});
+test('purging expired facts invokes invalidation once before any subsequent reuse',async()=>{
+ const s=storeSetup();await s.store.ensure('https://form.test');let invalidated=0;const restarted=new s.SessionFactsStore(()=>Date.now()+FACT_TTL_MS+1000,()=>invalidated++);
+ assert.equal(await restarted.status(),null);assert.equal(invalidated,1);assert.equal(await restarted.status(),null);assert.equal(invalidated,1);assert.equal(s.data[WORKFLOW_SESSION_KEY],undefined);
+});
+test('a delayed session refresh cannot erase a replacement scan or restore facts after clear',async()=>{
+ const s=setup();await s.controller.scan();let complete;const pending=[];const original=s.deps.status;
+ const controller=new AssistantOrchestrator({...s.deps,status:()=>new Promise(resolve=>pending.push(resolve))});
+ const restoring=controller.restore();pending.shift()(session());await restoring;
+ const refreshing=controller.refreshSession();const scanning=controller.scan();assert.equal(pending.length,2);pending.shift()(null);await refreshing;assert.equal(controller.snapshot().stage,'scanning');pending.shift()(await original());await scanning;assert.equal(controller.snapshot().stage,'collecting');
+ const refresh=controller.refreshSession();complete=pending.shift();await controller.clearSession();complete(session());await refresh;assert.equal(controller.snapshot().session,null);assert.equal(controller.snapshot().stage,'idle');controller.dispose();s.controller.dispose();
+});
+test('invalid dates and out-of-range numbers remain missing required answers',async()=>{
+ const draft=text=>({text,selected:false,overwrite:false,source:'manual',protected:true});
+ const number={...field(8,'Age','number'),constraints:{min:'18',max:'100'}},date={...field(9,'Date','date'),constraints:{min:'2024-01-01',max:'2024-12-31'}};
+ for(const value of ['NaN','1e999','17','101'])assert.equal(validDraft(number,draft(value)),false);assert.equal(validDraft(number,draft('18')),true);
+ for(const value of ['2024-02-30','2023-02-29','2025-01-01','0000-01-01'])assert.equal(validDraft(date,draft(value)),false);assert.equal(validDraft(date,draft('2024-02-29')),true);
+ const s=setup();s.setScan(scan([number,date]));await s.controller.scan();s.controller.edit(number.fieldId,{text:'17'});s.controller.edit(date.fieldId,{text:'2024-02-30'});assert.equal(questionQueue(s.controller.snapshot()).length,2);s.controller.dispose();
+});
+test('an older status response cannot replace facts confirmed by a completed fill',async()=>{
+ const previous=session();let delayed=false,complete;
+ const s=setup({ensure:async()=>previous,status:()=>delayed?new Promise(resolve=>{complete=resolve;}):Promise.resolve(previous),fill:async(request,items)=>request.type==='PIKO_FILL_REVIEW'?{ok:true,reviewId:id('review',1),expiresAt:Date.now()+60000,preflight:{ok:true,results:items.map(i=>({fieldId:i.fieldId,status:'not-verified'}))}}:{ok:true,result:{batchId:id('batch',1),status:'completed',results:items.map(i=>({fieldId:i.fieldId,status:'filled'}))},memory:{saved:1,session:{...previous,version:2,facts:[{factId:id('fact',1),key:'full_name',value:'Alex Thomas',source:'user_confirmed',confirmedAt:Date.now()}]}}}});
+ await s.controller.scan();s.controller.edit(fields[0].fieldId,{text:'Alex Thomas',selected:true});await s.controller.review();s.controller.rememberCheckbox(true);s.controller.approveCheckbox(true);delayed=true;const refresh=s.controller.refreshSession();await s.controller.fill();complete(previous);await refresh;assert.equal(s.controller.snapshot().stage,'results');assert.equal(s.controller.snapshot().session.version,2);assert.equal(s.controller.snapshot().session.facts.length,1);s.controller.dispose();
 });

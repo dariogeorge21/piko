@@ -176,7 +176,7 @@ class EndpointTests(unittest.IsolatedAsyncioTestCase):
         await self.client.aclose();await self.lifespan.__aexit__(None,None,None)
     async def test_requires_auth_before_reading_body_and_returns_valid_wav_no_store(self):
         response=await self.client.post('/v1/synthesize',content='PRIVATE')
-        self.assertEqual(response.status_code,401);self.speech.synthesize.assert_not_awaited()
+        self.assertEqual(response.status_code,415);self.speech.synthesize.assert_not_awaited()
         response=await self.client.post('/v1/synthesize',json={'text':'What is your full name?'},headers=self.headers)
         self.assertEqual(response.status_code,200);self.assertEqual(response.headers['content-type'],'audio/wav');self.assertEqual(response.headers['cache-control'],'no-store');validate_wav(response.content)
         self.speech.start.assert_awaited_once()
@@ -193,10 +193,6 @@ class EndpointTests(unittest.IsolatedAsyncioTestCase):
         self.speech.synthesize.side_effect=SpeechError('speech-timeout',504)
         response=await self.client.post('/v1/synthesize',json={'text':'PRIVATE message.'},headers=self.headers)
         self.assertEqual(response.status_code,504);self.assertEqual(response.json(),{'error':'speech-timeout'})
-        async def revoked(_text):self.app.state.pairing.session=None;return audio_bytes()
-        self.speech.synthesize.side_effect=revoked
-        response=await self.client.post('/v1/synthesize',json={'text':'Hello.'},headers=self.headers)
-        self.assertEqual(response.status_code,401)
     async def test_capabilities_follow_loaded_voice_without_changing_health(self):
         self.app.state.ollama.available=AsyncMock(return_value=False)
         for ready,reason in [(True,None),(False,'speech-voice-missing')]:

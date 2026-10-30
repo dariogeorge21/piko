@@ -20,6 +20,7 @@ class VoiceConfig:
     max_bytes: int = MAX_AUDIO_BYTES
     max_seconds: int = MAX_AUDIO_SECONDS
     configured: bool = False
+    vad_model: Path | None = None
 
     @classmethod
     def load(cls, env: Mapping[str, str] | None = None) -> "VoiceConfig":
@@ -41,8 +42,11 @@ class VoiceConfig:
             timeout = int(setting("WHISPER_TIMEOUT_SECONDS", "45"))
             size = int(setting("MAX_AUDIO_BYTES", str(MAX_AUDIO_BYTES)))
             duration = int(setting("MAX_AUDIO_DURATION_SECONDS", str(MAX_AUDIO_SECONDS)))
+            vad = Path(setting("WHISPER_VAD_MODEL_PATH")).expanduser().resolve(strict=True) if setting("WHISPER_VAD_MODEL_PATH") else None
+            if vad is not None and not vad.is_file():
+                return cls()
             if not (1 <= timeout <= 45 and 1 <= size <= MAX_AUDIO_BYTES and 1 <= duration <= MAX_AUDIO_SECONDS):
                 return cls()
-            return cls(*paths, timeout, size, duration, True)
+            return cls(*paths, timeout, size, duration, True, vad)
         except (OSError, ValueError, TypeError):
             return cls()

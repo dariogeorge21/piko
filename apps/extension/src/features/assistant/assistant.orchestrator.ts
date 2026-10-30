@@ -60,6 +60,9 @@ export class AssistantOrchestrator {
     this.send({ type: 'SCAN_START', requestId })
     let result: ScanResult | null = null
     try {
+      // Purge expired facts before creating the replacement document registry.
+      await this.deps.status()
+      if (epoch !== this.epoch || this.state.scanRequest !== requestId) return
       result = await this.deps.scan()
       if (epoch !== this.epoch || this.state.scanRequest !== requestId) { void this.deps.stopScan(result); return }
       const session = await this.deps.ensure(result)
@@ -74,23 +77,26 @@ export class AssistantOrchestrator {
   }
   private askNext() {
     const question = nextQuestion(this.state)
-    void this.deps.speak(question?.spoken ?? (Object.keys(this.state.drafts).length ? 'Your answers are ready for review.' : 'No supported answers are available. You can finish manually.'))
+    this.speak(question?.spoken ?? (Object.keys(this.state.drafts).length ? 'Your answers are ready for review.' : 'No supported answers are available. You can finish manually.'))
   }
+  private speak(text: string) { void this.deps.speak(text).catch(() => {}) }
   transcript(text: string) { if (this.state.stage === 'filling' || this.state.stage === 'stale') return; this.cancel(); this.send({ type: 'TRANSCRIPT', text }) }
   discard() { this.cancel(); this.send({ type: 'DISCARD' }) }
+  revise(fieldId: string) { this.cancel(); this.send({ type: 'REVISE', fieldId }) }
   recordingStage(stage: string) { this.send({ type: 'TRANSCRIBING', busy: stage === 'processing' }) }
   edit(fieldId: string, change: Partial<Pick<WorkflowDraft, 'text' | 'selected' | 'overwrite'>>) {
     if (this.state.stage === 'filling') return
     this.cancel(); this.send({ type: 'EDIT', fieldId, change })
   }
   skip(fieldId: string) { this.cancel(); this.send({ type: 'SKIP', fieldId }); this.askNext() }
-  async interpret() {
+  async interpret(focusFieldId?: string) {
     if (!['collecting', 'review', 'error'].includes(this.state.stage) || !liveContext(this.state, this.deps.now()) || !this.state.transcript.trim()) return
     this.cancel()
-    const token = this.token(), context = this.context(token), controller = new AbortController()
+    const token = this.token(), context = { ...this.context(token), ...(focusFieldId ? { focusFieldId } : {}) }, controller = new AbortController()
     this.operation = controller
     const request = interpretationRequest(this.state.scan!, this.state.transcript)
-    request.knownFacts = relevantFacts(eligibleFields(this.state), this.state.session)
+    if (focusFieldId) request.fields = request.fields.filter(field => field.fieldId === focusFieldId)
+    request.knownFacts = relevantFacts(eligibleFields(this.state).filter(field => !focusFieldId || field.fieldId === focusFieldId), this.state.session)
     this.send({ type: 'INTERPRET_START', token })
     try {
       const stored = await this.deps.status()
@@ -114,7 +120,7 @@ export class AssistantOrchestrator {
     this.cancel()
     const token = this.token(), workflow = this.context(token)
     this.send({ type: 'REVIEW_START', token })
-    const response = await this.deps.fill({ type: 'PIKO_FILL_REVIEW', tabId: this.state.scan!.tabId, scanId: token.scanId, items, workflow: { sessionId: workflow.sessionId, sessionVersion: workflow.sessionVersion, revision: workflow.revision } }, items)
+    const response = await this.deps.fill({ type: 'PIKO_FILL_REVIEW', tabId: this.state.scan!.tabId, scanId: token.scanId, items, workflow: { sessionId: workflow.sessionId, sessionVersion: workflow.sessionVersion, revision: workflow.revision } }, items).catch((): FillResponse => ({ ok: false, error: 'unavailable' }))
     if (!tokenMatches(this.state, token)) { if (response.ok && 'reviewId' in response) void this.deps.cancelReview(response.reviewId); return }
     if (response.ok && 'reviewId' in response) {
       this.send({ type: 'REVIEW_READY', token, review: { reviewId: response.reviewId, expiresAt: response.expiresAt, items: structuredClone(items), revision: token.revision }, preflight: response.preflight })
@@ -129,11 +135,11 @@ export class AssistantOrchestrator {
     const review = this.state.review!, token = this.token(), context = this.context(token), rememberSelected = this.state.remember
     clearTimeout(this.reviewTimer); this.deps.stopSpeech()
     this.send({ type: 'FILL_START', token, now: this.deps.now() })
-    const response = await this.deps.fill({ type: 'PIKO_FILL_APPROVE', reviewId: review.reviewId, workflow: { sessionId: context.sessionId, sessionVersion: context.sessionVersion, revision: context.revision }, rememberSelected }, review.items)
+    const response = await this.deps.fill({ type: 'PIKO_FILL_APPROVE', reviewId: review.reviewId, workflow: { sessionId: context.sessionId, sessionVersion: context.sessionVersion, revision: context.revision }, rememberSelected }, review.items).catch((): FillResponse => ({ ok: false, error: 'unavailable' }))
     if (!tokenMatches(this.state, token)) return
     if (response.ok && 'result' in response) {
       this.send({ type: 'FILL_DONE', token, result: response.result, ...(response.memory?.session ? { session: response.memory.session } : {}) })
-      void this.deps.speak('The approved batch has been checked. Review the field results. Submission is still manual.')
+      this.speak('The approved batch has been checked. Review the field results. Submission is still manual.')
     } else if (!response.ok) this.send({ type: 'ERROR', error: `fill-${response.error}`, outcome: response.preflight })
   }
   stale(reason = 'page-changed') {
@@ -141,13 +147,16 @@ export class AssistantOrchestrator {
     this.cancel(); this.send({ type: 'STALE', reason })
   }
   async refreshSession() {
-    if (this.state.stage === 'filling') return
+    if (this.state.stage === 'filling' || this.state.stage === 'scanning') return
+    const epoch = this.epoch
     try {
       const session = await this.deps.status()
+      if (epoch !== this.epoch || ['filling', 'scanning'].includes(this.state.stage)) return
+      if (session && this.state.session?.sessionId === session.sessionId && session.version < this.state.session.version) return
       if (session && this.state.session && (session.sessionId !== this.state.session.sessionId || session.version !== this.state.session.version)) this.stale('session-changed')
       if (!session) { this.cancel(); this.deps.resetVoice() }
       this.send({ type: 'SESSION', session })
-    } catch { this.cancel(); this.send({ type: 'ERROR', error: 'session-storage-unavailable' }) }
+    } catch { if (epoch === this.epoch) { this.cancel(); this.send({ type: 'ERROR', error: 'session-storage-unavailable' }) } }
   }
   clearScan() { if (this.state.stage === 'filling') return; this.cancel(); if (this.state.scan) void this.deps.stopScan(this.state.scan); const session = this.state.session; this.send({ type: 'CLEAR' }); if (session) this.send({ type: 'SESSION', session }) }
   async clearSession() {

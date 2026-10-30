@@ -10,14 +10,28 @@ export function emptyDraft(): WorkflowDraft { return { text: '', selected: false
 export function targetFor(field: ScanField, text: string): FillValue {
   return field.fieldType === 'checkbox' ? { kind: 'checkbox', checked: text === 'true' } : field.fieldType === 'select' || field.fieldType === 'radio' ? { kind: field.fieldType, optionId: text } : { kind: field.fieldType, value: text }
 }
+const numeric = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i
+function validNumber(text: string) { return numeric.test(text) && Number.isFinite(Number(text)) }
+function validDate(text: string) {
+  const timestamp = Date.parse(text)
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) && !text.startsWith('0000') && Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === text
+}
 export function validDraft(field: ScanField, draft?: WorkflowDraft): boolean {
-  if (!draft || !draft.text.trim() || draft.text.length > 1024) return false
+  if (!draft || !draft.text.trim()) return false
   if (field.fieldType === 'checkbox') return ['true', 'false'].includes(draft.text) && (!field.required || draft.text === 'true')
   if (['select', 'radio'].includes(field.fieldType)) return field.options.some(option => option.optionId === draft.text && !option.disabled)
-  if (field.constraints.minLength !== undefined && draft.text.length < field.constraints.minLength || field.constraints.maxLength !== undefined && draft.text.length > field.constraints.maxLength) return false
+  if (['text', 'textarea'].includes(field.fieldType)) return true
   if (field.fieldType === 'email' && !/^[^\s@]+@[^\s@]+$/.test(draft.text)) return false
-  if (field.fieldType === 'number' && (!/^-?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?$/i.test(draft.text) || !Number.isFinite(Number(draft.text)))) return false
-  if (field.fieldType === 'date' && (!/^\d{4}-\d{2}-\d{2}$/.test(draft.text) || !Number.isFinite(Date.parse(draft.text)))) return false
+  if (field.fieldType === 'number') {
+    if (!validNumber(draft.text)) return false
+    const { min, max } = field.constraints, value = Number(draft.text)
+    if (min !== undefined && validNumber(min) && value < Number(min) || max !== undefined && validNumber(max) && value > Number(max)) return false
+  }
+  if (field.fieldType === 'date') {
+    if (!validDate(draft.text)) return false
+    const { min, max } = field.constraints
+    if (min !== undefined && validDate(min) && draft.text < min || max !== undefined && validDate(max) && draft.text > max) return false
+  }
   return true // Exact native constraints remain enforced by Step 6 preflight.
 }
 export function selectedItems(state: WorkflowState): FillInstruction[] {

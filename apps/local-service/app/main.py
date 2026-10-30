@@ -23,7 +23,8 @@ from .transcription import Transcriber, Transcript, VoiceError
 from .services.ollama_client import OllamaClient, InterpretationError
 from .services.interpretation_service import InterpretationService
 from .schemas.interpret import InterpretRequest, InterpretResponse
-from .api.interpret import interpret_request
+from .api.interpret import interpret_request, inference_request
+from .schemas.summary import SummaryRequest, SummaryResponse
 from .services.piper_service import PiperService, SpeechError
 from .schemas.synthesize import SynthesizeRequest
 from .api.synthesize import synthesize_request
@@ -43,7 +44,7 @@ class HealthResponse(StrictModel):
 
 class PairRequest(StrictModel):
     protocol_version: int = Field(ge=1, le=10000)
-    code: str = Field(min_length=16, max_length=16, pattern=r"^[a-f0-9]{16}$")
+    code: str | None = Field(default=None)
 
 
 class PairResponse(StrictModel):
@@ -71,7 +72,7 @@ class DisconnectResponse(StrictModel):
 
 
 def authenticate(request: Request) -> Session:
-    return request.app.state.pairing.authenticate(request.headers.get("authorization", ""), request.state.extension_origin)
+    return request.app.state.pairing.authenticate(request.headers.get("authorization", ""), getattr(request.state, "extension_origin", "*"))
 
 
 def create_app(clock: Callable[[], float] = time.monotonic, wall_clock: Callable[[], float] = time.time, announce: Callable[[str], None] | None = None, voice_config: VoiceConfig | None = None, transcriber: Transcriber | None = None, ollama_client: OllamaClient | None = None, piper_service: PiperService | None = None) -> FastAPI:
@@ -87,15 +88,13 @@ def create_app(clock: Callable[[], float] = time.monotonic, wall_clock: Callable
             await application.state.speech.start()
             if not application.state.transcriber.config.configured:
                 logging.getLogger("piko.service").warning("Local speech recognition is unavailable; configure the local executables and model.")
-            code = manager.start()
-            # The sole secret output is printed once to the startup terminal, never
-            # through a logger. Request/error handlers never echo request content.
-            line = f"Piko pairing code (valid for 5 minutes): {code}"
+            manager.start()
+            line = "Piko companion service running on http://127.0.0.1:8765"
             if announce is None:
                 print(line, flush=True)
             else:
                 announce(line)
-            del code, line
+            del line
             yield
         finally:
             manager.clear()
@@ -105,7 +104,7 @@ def create_app(clock: Callable[[], float] = time.monotonic, wall_clock: Callable
                 await application.state.ollama.close()
 
     application = FastAPI(title="Local Voice Form Assistant Service", version="0.1.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
-    application.add_middleware(CORSMiddleware, allow_origin_regex=f"^{ORIGIN_PATTERN}$", allow_methods=["GET", "POST", "DELETE"], allow_headers=["Authorization", "Content-Type", "X-Piko-Extension-Origin"], allow_credentials=False, max_age=60)
+    application.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=False, max_age=60)
     application.add_middleware(RequestBoundary)
 
     @application.exception_handler(RequestValidationError)
@@ -141,7 +140,7 @@ def create_app(clock: Callable[[], float] = time.monotonic, wall_clock: Callable
     async def pair(payload: PairRequest, request: Request) -> PairResponse:
         if payload.protocol_version != 1:
             raise HTTPException(426, "unsupported_protocol")
-        token, expires_at = request.app.state.pairing.pair(payload.code, request.state.extension_origin)
+        token, expires_at = request.app.state.pairing.pair(payload.code or "", getattr(request.state, "extension_origin", "*"))
         return PairResponse(token=token, expires_at=expires_at)
 
     @application.get("/v1/capabilities", response_model=CapabilitiesResponse)
@@ -152,6 +151,10 @@ def create_app(clock: Callable[[], float] = time.monotonic, wall_clock: Callable
     @application.post("/v1/interpret", response_model=InterpretResponse)
     async def interpret(payload: InterpretRequest, request: Request, _session: Annotated[Session, Depends(authenticate)]) -> InterpretResponse:
         return await interpret_request(payload, request, authenticate)
+
+    @application.post('/v1/summary', response_model=SummaryResponse)
+    async def summarize(payload: SummaryRequest, request: Request, _session: Annotated[Session, Depends(authenticate)]) -> SummaryResponse:
+        return await inference_request(payload, request, authenticate, request.app.state.interpreter.summarize)
 
     @application.post("/v1/synthesize")
     async def synthesize(payload: SynthesizeRequest, request: Request, _session: Annotated[Session, Depends(authenticate)]) -> Response:

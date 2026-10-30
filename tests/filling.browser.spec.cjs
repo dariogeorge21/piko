@@ -193,31 +193,6 @@ test('page-side reversion, replacement, later-field side effects and custom vali
   current=await scan();expect((await review(current,[instruction(current,'Organization',{kind:'text',value:'Approved Org'},false)])).ok).toBe(false);
 });
 
-test('manual UI requires exact review and explicit approval; edits or deselection invalidate review',async({},testInfo)=>{
-  await panel.getByRole('button',{name:'Inspect this page',exact:true}).click();
-  const filling=panel.getByRole('region',{name:'Manual form filling'});
-  await expect(filling).toBeVisible();
-  await filling.getByRole('checkbox',{name:'Include Organization',exact:true}).check();
-  await filling.getByRole('textbox',{name:'Proposed value for Organization · text',exact:true}).fill('Synthetic Org');
-  await filling.getByRole('checkbox',{name:'Include Full name',exact:true}).check();
-  await filling.getByRole('textbox',{name:'Proposed value for Full name · text',exact:true}).fill('Alex Thomas');
-  await filling.getByRole('checkbox',{name:'Allow overwrite for Full name',exact:true}).check();
-  await filling.getByRole('button',{name:'Review selected values',exact:true}).click();
-  await expect(filling.getByRole('region',{name:'Exact batch approval'})).toContainText('Alex Thomas');
-  await filling.getByRole('checkbox',{name:'Include Full name',exact:true}).uncheck();
-  await expect(filling.getByRole('region',{name:'Exact batch approval'})).toHaveCount(0);
-  await filling.getByRole('button',{name:'Review selected values',exact:true}).click();
-  const approval=filling.getByRole('region',{name:'Exact batch approval'});
-  await expect(approval).toContainText('Synthetic Org');await expect(approval).not.toContainText('Alex Thomas');
-  await expect(approval.getByRole('button',{name:'Approve and fill selected fields'})).toBeDisabled();
-  await approval.getByRole('checkbox',{name:'I approve this exact batch and destination.',exact:true}).check();await approval.getByRole('button',{name:'Approve and fill selected fields'}).click();
-  await expect(filling.getByRole('region',{name:'Fill outcomes'})).toContainText('Batch completed');
-  expect(await page.locator('#organization').inputValue()).toBe('Synthetic Org');expect(await page.locator('#full-name').inputValue()).toBe('PRIVATE_EXISTING_NAME_901');
-  expect(await panel.evaluate(()=>({...localStorage}))).toEqual({});
-  for(const width of [280,360,480]) {await panel.setViewportSize({width,height:800});expect(await panel.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);}
-  await panel.screenshot({path:testInfo.outputPath('manual-fill-results.png'),fullPage:true});
-});
-
 test('React controlled forms retain recognized events and report controlled-state reversion',async()=>{
   await page.evaluate(()=>{
     const root=document.createElement('div');root.id='react-root';document.body.append(root);

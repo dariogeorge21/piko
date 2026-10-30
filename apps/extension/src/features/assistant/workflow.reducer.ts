@@ -16,6 +16,7 @@ export type WorkflowAction =
   | { type: 'SESSION'; session: SessionSnapshot | null }
   | { type: 'TRANSCRIPT'; text: string }
   | { type: 'DISCARD' }
+  | { type: 'REVISE'; fieldId: string }
   | { type: 'TRANSCRIBING'; busy: boolean }
   | { type: 'INTERPRET_START'; token: WorkflowToken }
   | { type: 'INTERPRET_DONE'; token: WorkflowToken; result: InterpretResponse }
@@ -61,6 +62,12 @@ export function workflowReducer(state: WorkflowState, action: WorkflowAction): W
     case 'DISCARD':
       if (!editable.includes(state.stage) || !liveContext(state)) return state
       return { ...revoke(state), stage: 'collecting', transcript: '', messages: [], clarifications: [], evidence: {}, drafts: Object.fromEntries(Object.entries(state.drafts).filter(([, draft]) => draft.source !== 'model' || draft.protected)), mediaRevision: state.mediaRevision + 1 }
+    case 'REVISE': {
+      if (!editable.includes(state.stage) || !liveContext(state) || !eligibleFields(state).some(field => field.fieldId === action.fieldId)) return state
+      const drafts = { ...state.drafts }, evidence = { ...state.evidence }
+      delete drafts[action.fieldId]; delete evidence[action.fieldId]
+      return { ...revoke(state), stage: 'collecting', drafts, evidence, transcript: '', mediaRevision: state.mediaRevision + 1, clarifications: state.clarifications.filter(item => !item.targetFieldIds.includes(action.fieldId)) }
+    }
     case 'TRANSCRIBING':
       if (action.busy && (state.stage === 'collecting' || state.stage === 'review')) return { ...revoke(state), stage: 'transcribing' }
       if (!action.busy && state.stage === 'transcribing') return { ...state, stage: 'collecting' }

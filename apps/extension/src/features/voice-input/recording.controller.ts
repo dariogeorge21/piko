@@ -8,6 +8,7 @@ interface RecorderDependencies {
   supports: (mime: string) => boolean
   now: () => number
   limitMs: number
+  watchSilence?: (stream: MediaStream, stop: () => void) => () => void
 }
 const defaults: RecorderDependencies = {
   getUserMedia: constraints => {
@@ -30,12 +31,14 @@ export class RecordingController {
   private timer: ReturnType<typeof setTimeout> | undefined
   private ticker: ReturnType<typeof setInterval> | undefined
   private abort: AbortController | null = null
+  private silence: (() => void) | undefined
   private deps: RecorderDependencies
   constructor(private readonly update: (state: RecordingState) => void, private readonly transcribe: (audio: Blob, durationMs: number, signal: AbortSignal) => Promise<Transcript>, dependencies: Partial<RecorderDependencies> = {}) { this.deps = { ...defaults, ...dependencies } }
   get snapshot() { return { ...this.state } }
   get retainedBytes() { return this.size }
   private set(next: RecordingState) { this.state = next; this.update({ ...next }) }
   private stopTracks() {
+    this.silence?.(); this.silence = undefined
     this.stream?.getTracks().forEach(track => track.stop()); this.stream = null
     if (this.microphoneLease) voiceSession.endRecording(this.microphoneLease)
     this.microphoneLease = null
@@ -62,7 +65,7 @@ export class RecordingController {
     this.microphoneLease = voiceSession.beginRecording(() => this.reset())
     this.set({ ...initialRecording, stage: 'requesting-permission' })
     try {
-      const stream = await this.deps.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true }, video: false })
+      const stream = await this.deps.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, video: false })
       if (version !== this.generation) { stream.getTracks().forEach(track => track.stop()); return }
       this.stream = stream
       stream.getAudioTracks().forEach(track => track.addEventListener('ended', () => { if (version === this.generation && this.state.stage === 'recording') this.fail('recording-failed') }))
@@ -79,6 +82,7 @@ export class RecordingController {
       recorder.onstop = () => { if (version === this.generation) void this.finish(version, recorder.mimeType) }
       this.started = this.deps.now()
       recorder.start(250)
+      this.silence = this.deps.watchSilence?.(stream, () => this.stop())
       this.set({ ...initialRecording, stage: 'recording' })
       this.ticker = setInterval(() => { if (this.state.stage === 'recording') this.set({ ...this.state, elapsedMs: Math.min(this.deps.limitMs, this.deps.now() - this.started) }) }, 250)
       this.timer = setTimeout(() => this.stop(), this.deps.limitMs)

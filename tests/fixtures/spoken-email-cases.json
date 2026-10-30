@@ -1,0 +1,10 @@
+[
+ {"kind":"email","quote":"My email is Alex at example.test","value":"alex@example.test","expected":true},
+ {"kind":"email","quote":"My email is sam dot lee at example dot test.","value":"sam.lee@example.test","expected":true},
+ {"kind":"email","quote":"jane underscore doe at my dash company dot test","value":"jane_doe@my-company.test","expected":true},
+ {"kind":"email","quote":"alex at example dot test","value":"alex+extra@example.test","expected":false},
+ {"kind":"email","quote":"alexthomas at example dot test","value":"alex.thomas@example.test","expected":false},
+ {"kind":"email","quote":"alex at example dot test","value":"alex@example.com","expected":false},
+ {"kind":"email","quote":"alex at example dot test dot evil","value":"alex@example.test","expected":false},
+ {"kind":"text","quote":"alex at example dot test","value":"alex@example.test","expected":false}
+]

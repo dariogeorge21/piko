@@ -11,7 +11,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     <footer className="mt-auto space-y-3 pt-2">
       <Separator />
       <p className="flex items-start gap-2 text-xs leading-5 text-muted-foreground"><LockKeyhole aria-hidden="true" className="mt-0.5 size-3.5 shrink-0" />Drafts are temporary. Interpretation uses your local companion; filling requires your approval.</p>
-      <p className="text-[11px] text-muted-foreground">Piko v{pkg.version} · Step 10 · Local Piper speech</p>
+      <p className="text-[11px] text-muted-foreground">Piko v{pkg.version} · Local voice assistance</p>
 
     </footer>
   </main>

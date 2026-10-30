@@ -1,12 +1,24 @@
-const relevantSelector = 'input,textarea,select,option,optgroup,label,legend,fieldset,form,iframe,[role="radiogroup"]'
-const watchedAttributes = ['id', 'name', 'type', 'form', 'for', 'aria-labelledby', 'aria-label', 'aria-hidden', 'hidden', 'disabled', 'aria-disabled', 'readonly', 'aria-readonly', 'required', 'aria-required', 'inert', 'class', 'style', 'min', 'max', 'minlength', 'maxlength', 'pattern', 'step', 'placeholder', 'multiple', 'autocomplete', 'role', 'label', 'value']
+const formControlSelector = 'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]),textarea,select,option,fieldset,[role="radiogroup"]'
+const watchedAttributes = ['id', 'name', 'type', 'form', 'for', 'aria-labelledby', 'aria-label', 'aria-hidden', 'hidden', 'disabled', 'aria-disabled', 'readonly', 'aria-readonly', 'required', 'aria-required', 'inert', 'min', 'max', 'minlength', 'maxlength', 'pattern', 'step', 'placeholder', 'multiple', 'autocomplete', 'role', 'label', 'value']
+
+function isIgnoredInput(element: Element): boolean {
+  return element instanceof HTMLInputElement && ['hidden', 'submit', 'button', 'reset', 'image'].includes(element.type)
+}
+function isFormFieldControl(element: Element): boolean {
+  if (element instanceof HTMLInputElement) return !isIgnoredInput(element)
+  return element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement || element instanceof HTMLOptionElement || element instanceof HTMLOptGroupElement
+}
 
 export function watchMutations(labelNodes: Set<Element>, invalidate: () => void, notify: () => void) {
   let stale = false
   let timer: ReturnType<typeof setTimeout> | undefined
   function touchesLabel(node: Node): boolean {
     let element = node instanceof Element ? node : node.parentElement
-    while (element) { if (labelNodes.has(element)) return true; element = element.parentElement }
+    while (element) {
+      if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element instanceof HTMLSelectElement) return false
+      if (labelNodes.has(element)) return true
+      element = element.parentElement
+    }
     return false
   }
   function relevant(record: MutationRecord): boolean {
@@ -14,15 +26,24 @@ export function watchMutations(labelNodes: Set<Element>, invalidate: () => void,
     // (or textarea text). These are answers, not scan identity or labels. Keep
     // option/radio values watched; live preflight still checks current answers
     // and native constraints immediately before every write.
-    if (record.type === 'attributes' && record.attributeName === 'value' && record.target instanceof HTMLInputElement && !['radio', 'checkbox'].includes(record.target.type)) return false
-    const answerText = record.target instanceof Element ? record.target : record.target.parentElement
-    if (answerText?.closest('textarea') && (record.type === 'characterData' || record.type === 'childList' && [...record.addedNodes, ...record.removedNodes].every((node) => node.nodeType === Node.TEXT_NODE))) return false
-    if (touchesLabel(record.target)) return true
-    if (record.type === 'characterData') return Boolean(record.target.parentElement?.closest('label,legend,option'))
-    const target = record.target instanceof Element ? record.target : record.target.parentElement
-    if (record.type === 'attributes') return Boolean(target && (target.matches(relevantSelector) || target.querySelector('input,textarea,select')))
-    if (target?.closest('label,legend,select')) return true
-    return [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches(relevantSelector) || node.querySelector(relevantSelector)))
+    if (record.type === 'attributes') {
+      const target = record.target instanceof Element ? record.target : record.target.parentElement
+      if (!target) return false
+      if (isIgnoredInput(target)) return false
+      if (record.attributeName === 'value' && (target instanceof HTMLInputElement && !['radio', 'checkbox'].includes(target.type) || target instanceof HTMLTextAreaElement)) return false
+      if (isFormFieldControl(target)) return true
+      if (target instanceof HTMLFieldSetElement && record.attributeName === 'disabled') return true
+      if (target instanceof HTMLLabelElement && record.attributeName === 'for') return true
+      if (labelNodes.has(target) && record.attributeName === 'id') return true
+      return false
+    }
+    if (record.type === 'characterData') {
+      const answerText = record.target.parentElement
+      if (answerText?.closest('textarea') || answerText?.closest('input')) return false
+      return Boolean(answerText?.closest('label,legend,option') || touchesLabel(record.target))
+    }
+    // ChildList mutations: only added or removed form controls alter the form structure.
+    return [...record.addedNodes, ...record.removedNodes].some((node) => node instanceof Element && (node.matches(formControlSelector) || Boolean(node.querySelector(formControlSelector))))
   }
   function process(records: MutationRecord[]) {
     // React temporarily clears/restores input names while updating controlled

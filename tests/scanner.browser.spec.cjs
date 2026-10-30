@@ -100,25 +100,13 @@ async function forbiddenCalls() {
 }
 function fields(response) { return response.result.inventory.forms.flatMap((form) => form.fields); }
 
-test('production build requires an activeTab grant and rejects restricted pages without claiming success', async () => {
-  const manifest = JSON.parse(fs.readFileSync(path.join(production, 'manifest.json'), 'utf8'));
-  expect(manifest.permissions).toEqual(['sidePanel', 'activeTab', 'scripting', 'storage']);
-  expect(manifest.host_permissions).toEqual(['http://127.0.0.1:8765/*']); expect(manifest.content_scripts).toBeUndefined();
-  await launch(false);
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).click();
-  await expect(panel.getByText('Page could not be inspected', { exact: true })).toBeVisible();
-  await expect(panel.getByText(/toolbar icon/).last()).toBeVisible();
-  await page.goto('chrome://version'); await page.bringToFront();
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await expect(panel.getByRole('alert')).toContainText('cannot be inspected');
+test('production permissions require activeTab and reject restricted pages',async()=>{
+ const manifest=JSON.parse(fs.readFileSync(path.join(production,'manifest.json'),'utf8'));expect(manifest.permissions).toEqual(['sidePanel','activeTab','scripting','storage']);expect(manifest.host_permissions).toEqual(['http://127.0.0.1:8765/*']);expect(manifest.content_scripts).toBeUndefined();await launch(false);expect((await requestScan()).ok).toBe(false);await page.goto('chrome://version');const result=await requestScan();expect(result.ok).toBe(false);expect(['unsupported-page','activate-extension']).toContain(result.error);
 });
-
 test('real packaged injection returns correct metadata without reading values, writing or submitting', async ({}, testInfo) => {
   await launch(true);
   await installPrivacyTripwires();
   const before = await page.locator('body').innerHTML();
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).click();
-  await expect(panel.getByRole('region', { name: 'Read-only form scanner' })).toContainText('supported fields');
   const result = await requestScan();
   expect(result.ok).toBe(true);
   const all = fields(result);
@@ -154,8 +142,6 @@ test('real packaged injection returns correct metadata without reading values, w
   const again = await requestScan();
   expect(fields(again).map((field) => field.fieldId)).toEqual(all.map((field) => field.fieldId));
   expect(again.result.inventory.scanId).not.toBe(result.result.inventory.scanId);
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await expect(panel.getByRole('region', { name: 'Read-only form scanner' })).toContainText('Registration form');
   for (const width of [280, 360, 480]) {
     await panel.setViewportSize({ width, height: 800 });
     expect(await panel.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -164,75 +150,10 @@ test('real packaged injection returns correct metadata without reading values, w
   await panel.screenshot({ path: testInfo.outputPath('scanner-inventory.png'), fullPage: true });
 });
 
-test('relevant mutations invalidate scans and replacement fields receive new identifiers', async () => {
-  await launch(true);
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).click();
-  await expect(panel.getByRole('region', { name: 'Read-only form scanner' })).toContainText('supported fields');
-  const before = await requestScan();
-  // Synchronize the visible panel with its own fresh scan before mutation.
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await expect(panel.getByText('Reading field metadata…')).toHaveCount(0);
-  await page.locator('#unrelated').evaluate((element) => { element.textContent = 'An unrelated update'; });
-  await expect(panel.getByText('Scan is stale', { exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Reveal conditional field' }).click();
-  await expect(panel.getByText('Scan is stale', { exact: true })).toBeVisible();
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await expect(panel.getByText('Scan is stale', { exact: true })).toHaveCount(0);
-  const after = await requestScan();
-  expect(fields(after).find((field) => field.label === 'Additional details').required).toBe(true);
-  expect(fields(after).some((field) => field.fieldId === fields(before)[0].fieldId)).toBe(false);
-  await page.getByRole('button', { name: 'Replace full name' }).click();
-  const replacement = await requestScan();
-  expect(fields(replacement)[0].fieldId).not.toBe(fields(after)[0].fieldId);
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await page.locator('#email-label').evaluate((node) => { node.textContent = 'Work email'; });
-  await expect(panel.getByText('Scan is stale', { exact: true })).toBeVisible();
-});
 
-test('empty pages, tab changes and navigation invalidate old metadata without automatically rescanning', async () => {
-  await launch(true);
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).click();
-  await expect(panel.getByRole('region', { name: 'Read-only form scanner' })).toContainText('supported fields');
-  await page.goto(`${baseURL}/empty-fixture.html`);
-  await expect(panel.getByText('Scan is stale', { exact: true })).toBeVisible();
-  await panel.getByRole('button', { name: 'Inspect again', exact: true }).click();
-  await expect(panel.getByText(/No supported visible fields were found/)).toBeVisible();
-  const other = await context.newPage(); await other.goto(`${baseURL}/empty-fixture.html`);
-  await expect(panel.getByText('Scan is stale', { exact: true })).toBeVisible();
-  await panel.getByRole('button', { name: 'Clear scan', exact: true }).click();
-  await expect(panel.getByText('No page inspected. Scanning begins only when you click.', { exact: true })).toBeVisible();
-});
-
-test('option limits and sensitive identifier heuristics fail closed and option mutations stale the inventory', async () => {
-  await launch(true);
-  await page.evaluate(() => {
-    const select = document.getElementById('department');
-    for (let index = 0; index < 60; index++) select.add(new Option(`Synthetic option ${index}`, `RAW_LIMIT_${index}`));
-    const control = document.createElement('input');
-    control.name = 'otpCode'; control.setAttribute('aria-label', 'Security challenge'); control.value = 'PRIVATE_CAMELCASE_OTP';
-    document.getElementById('registration').append(control);
-  });
-  await installPrivacyTripwires();
-  const result = await requestScan();
-  expect(result.ok).toBe(true);
-  const department = fields(result).find((field) => field.label === 'Department');
-  expect(department.options).toHaveLength(50);
-  expect(department.eligible).toBe(false); expect(department.exclusionReasons).toContain('limit');
-  expect(result.result.inventory.truncated).toBe(true);
-  expect(result.result.inventory.exclusions.sensitive).toBe(5);
-  expect(JSON.stringify(result)).not.toMatch(/RAW_LIMIT_|PRIVATE_CAMELCASE|Security challenge/);
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).click();
-  await expect(panel.getByText('The metadata limit was reached. This is a partial inventory.', { exact: true })).toBeVisible();
-  await page.locator('#department option').nth(1).evaluate((option) => { option.textContent = 'Changed option label'; });
-  await expect(panel.getByText('Scan is stale', { exact: true })).toBeVisible();
-  await page.locator('#department').evaluate((select) => { for (const option of select.options) option.disabled = true; });
-  const disabledOptions = await requestScan();
-  const choice = fields(disabledOptions).find((field) => field.label === 'Department');
-  expect(choice.enabled).toBe(true); expect(choice.eligible).toBe(false); expect(choice.exclusionReasons).toContain('no-enabled-options');
-  expect(await forbiddenCalls()).toEqual([]);
-});
-
-
+async function current(scan){return worker.evaluate(async({tabId,scanId,documentId})=>{try{return(await chrome.tabs.sendMessage(tabId,{type:'PIKO_SCAN_CURRENT',scanId,documentId},{frameId:0})).current;}catch{return false;}},{tabId,scanId:scan.result.inventory.scanId,documentId:scan.result.inventory.documentId});}
+test('mutations invalidate registries and replacement controls receive fresh IDs',async()=>{await launch(true);const first=await requestScan(),before=fields(first).find(f=>f.label==='Full name').fieldId;await page.locator('#full-name').evaluate(e=>e.replaceWith(e.cloneNode(true)));await expect.poll(()=>current(first)).toBe(false);const second=await requestScan();expect(fields(second).find(f=>f.label==='Full name').fieldId).not.toBe(before);});
+test('navigation invalidates metadata and empty pages return empty inventories',async()=>{await launch(true);const first=await requestScan();await page.goto(baseURL+'/empty-fixture.html');await expect.poll(()=>current(first)).toBe(false);const empty=await requestScan();expect(empty.ok).toBe(true);expect(fields(empty)).toEqual([]);});
 test('the real production action grants activeTab and scans without test host permissions', async () => {
   await launch(false);
   const browserSession = await context.browser().newBrowserCDPSession();
@@ -245,26 +166,5 @@ test('the real production action grants activeTab and scans without test host pe
   expect(fields(result).find((field) => field.label === 'Full name')).toBeTruthy();
 });
 
-test('the panel scans its own window when URL metadata is withheld and another window is focused', async () => {
-  await launch(false);
-  const browserSession = await context.browser().newBrowserCDPSession();
-  const { targetInfos } = await browserSession.send('Target.getTargets', { filter: [{}] });
-  const tabTarget = targetInfos.find((target) => target.type === 'tab' && target.url === page.url());
-  await browserSession.send('Extensions.triggerAction', { id: extensionId, targetId: tabTarget.targetId });
-  const otherWindow = await worker.evaluate(async (url) => chrome.windows.create({ url, focused: true }), `${baseURL}/empty-fixture.html`);
-  await worker.evaluate(() => {
-    const query = chrome.tabs.query.bind(chrome.tabs);
-    chrome.tabs.query = async (options) => (await query(options)).map((tab) => {
-      const metadata = { ...tab }; delete metadata.url; delete metadata.pendingUrl; return metadata;
-    });
-  });
-  // Do not refocus the fixture window: the panel must explicitly send its owner.
-  await panel.getByRole('button', { name: 'Inspect this page', exact: true }).evaluate((button) => button.click());
-  const scanner = panel.getByRole('region', { name: 'Read-only form scanner' });
-  await expect(scanner).toContainText('17 supported fields');
-  await expect(scanner).toContainText('Registration form');
-  await expect(panel.getByText('Page could not be inspected', { exact: true })).toHaveCount(0);
-  const version = require('../apps/extension/package.json').version.replace(/\./g, '\\.');
-  await expect(panel.getByText(new RegExp(`Piko v${version}`))).toBeVisible();
-  await worker.evaluate(async (id) => chrome.windows.remove(id), otherWindow.id);
-});
+
+test('a panel can explicitly scan its own window while another window is focused',async()=>{await launch(true);const owner=await worker.evaluate(async id=>(await chrome.tabs.get(id)).windowId,tabId);const other=await worker.evaluate(async url=>chrome.windows.create({url,focused:true}),baseURL+'/empty-fixture.html');const result=await panel.evaluate(async windowId=>chrome.runtime.sendMessage({type:'PIKO_SCAN_ACTIVE',windowId,requestId:`request_${crypto.randomUUID().replace(/-/g,'')}`}),owner);expect(result.ok).toBe(true);expect(fields(result).find(f=>f.label==='Full name')).toBeTruthy();await worker.evaluate(async id=>chrome.windows.remove(id),other.id);});

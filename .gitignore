@@ -44,6 +44,7 @@ next-env.d.ts
 # Nested JavaScript apps and generated extension packages
 node_modules/
 dist/
+dist-dev/
 .output/
 release/
 

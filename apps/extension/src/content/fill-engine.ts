@@ -43,14 +43,12 @@ function validValue(entry: RegisteredField, item: BoundInstruction): boolean {
     if (item.target.kind === 'date' && text !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(text)) return false
     nativeSet(clone, 'value', text)
     if (clone.value !== text) return false
-    const min = Number(element.getAttribute('minlength') ?? -1)
-    const max = Number(element.getAttribute('maxlength') ?? -1)
-    if (text !== '' && ((min >= 0 && text.length < min) || (max >= 0 && text.length > max))) return false
   } else if ('checked' in item.target) nativeSet(clone, 'checked', item.target.checked)
   else if (clone instanceof HTMLSelectElement) nativeSet(clone, 'selectedIndex', [...(element as HTMLSelectElement).options].indexOf(optionFor(entry, item) as HTMLOptionElement))
   else { nativeSet(clone, 'checked', true) }
   if (entry.metadata.required && ('value' in item.target ? item.target.value === '' : 'checked' in item.target ? !item.target.checked : false)) return false
   if (entry.metadata.required && clone instanceof HTMLSelectElement && clone.value === '') return false
+  if (item.target.kind === 'text' || item.target.kind === 'textarea') return true
   return clone.validity.valid
 }
 

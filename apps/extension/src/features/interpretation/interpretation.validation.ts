@@ -1,4 +1,6 @@
 import { isWorkflowContext } from '../assistant/session-facts.validation'
+import { supportedText } from './spoken-evidence'
+import { invalidNameValue, isNameField, requestedNameValue } from './name-intent'
 import type { WorkflowContext } from '../assistant/session-facts.types'
 import validateRequest from './request-schema.generated.js'
 import validateResponse from './response-schema.generated.js'
@@ -9,10 +11,12 @@ import type { InterpretRequest, InterpretResponse } from './interpretation.gener
 export const interpretationErrors = ['model-unavailable', 'interpretation-timeout', 'invalid-model-output', 'unknown-field-id', 'invalid-option-id', 'target-type-mismatch', 'duplicate-field-update', 'unsupported-evidence', 'proposal-validation-failed', 'invalid_request', 'body_too_large', 'interpretation-busy', 'request-cancelled', 'session-expired', 'service-unavailable', 'stale-scan', 'invalid-response'] as const
 export type InterpretationErrorCode = typeof interpretationErrors[number]
 export class InterpretationError extends Error { constructor(readonly code: InterpretationErrorCode) { super(code) } }
-export interface InterpretMessage { type: 'PIKO_INTERPRET'; requestId: string; tabId: number; payload: InterpretRequest; workflow?: WorkflowContext }
+export interface InterpretMessage { type: 'PIKO_INTERPRET'; requestId: string; tabId: number; payload: InterpretRequest; workflow?: WorkflowContext; focusFieldId?: string }
 export type InterpretReply = { ok: true; requestId: string; result: InterpretResponse } | { ok: false; requestId: string; error: InterpretationErrorCode }
 export function isInterpretMessage(value: unknown): value is InterpretMessage {
-  return isRecord(value) && (hasKeys(value, ['type', 'requestId', 'tabId', 'payload']) || hasKeys(value, ['type', 'requestId', 'tabId', 'payload', 'workflow']) && isWorkflowContext(value.workflow)) && value.type === 'PIKO_INTERPRET' && isOpaqueId(value.requestId) && Number.isSafeInteger(value.tabId) && Number(value.tabId) >= 0 && validateRequest(value.payload) && new Set(value.payload.fields.map(field => field.fieldId)).size === value.payload.fields.length
+  if (!isRecord(value)) return false
+  const keys = ['type', 'requestId', 'tabId', 'payload', ...(value.workflow === undefined ? [] : ['workflow']), ...(value.focusFieldId === undefined ? [] : ['focusFieldId'])]
+  return hasKeys(value, keys) && (value.workflow === undefined || isWorkflowContext(value.workflow)) && (value.focusFieldId === undefined || isOpaqueId(value.focusFieldId)) && value.type === 'PIKO_INTERPRET' && isOpaqueId(value.requestId) && Number.isSafeInteger(value.tabId) && Number(value.tabId) >= 0 && validateRequest(value.payload) && new Set(value.payload.fields.map(field => field.fieldId)).size === value.payload.fields.length
 }
 export function eligibleMetadata(fields: ScanField[]): InterpretRequest['fields'] {
   return fields.filter(field => field.eligible).map(field => ({ fieldId: field.fieldId, label: field.label, type: field.fieldType, required: field.required, options: field.options.filter(option => !option.disabled).map(({ optionId, label }) => ({ optionId, label })), constraints: { ...field.constraints } }))
@@ -32,8 +36,10 @@ export function isInterpretResponse(value: unknown, request: InterpretRequest): 
     const evidence = update.evidence
     const source = evidence.source === 'transcript' && evidence.factId === null ? request.transcript : evidence.source === 'fact' ? request.knownFacts.find(fact => fact.factId === evidence.factId)?.text : undefined
     if (!source || !evidence.quote.trim() || !source.includes(evidence.quote)) return false
-    const normalize = (text: string) => text.toLowerCase().trim().replace(/\s+/g, ' ')
-    if ('value' in update.target && (!update.target.value.trim() || !normalize(evidence.quote).includes(normalize(update.target.value)))) return false
+    if ('value' in update.target) {
+      if (isNameField(field.label) && invalidNameValue(update.target.value)) return false
+      if (!update.target.value.trim() || !supportedText(update.target.kind, update.target.value, evidence.quote, field.label) && !(update.target.kind === 'text' && request.fields.length === 1 && requestedNameValue(field.label, update.target.value, request.transcript, evidence.quote))) return false
+    }
   }
   const clarificationIds = new Set<string>()
   for (const clarification of value.clarifications) {

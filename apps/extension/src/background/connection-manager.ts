@@ -159,6 +159,12 @@ export class ConnectionManager {
   }
 
   async interpret(payload: InterpretRequest, signal: AbortSignal): Promise<InterpretResponse> {
+    return await this.inference(payload, signal, 'interpret') as InterpretResponse
+  }
+  async summarize(payload: SummaryRequest, signal: AbortSignal): Promise<FormSummary> {
+    return await this.inference({ ...payload, transcript: 'Form summary', knownFacts: [] }, signal, 'summary') as FormSummary
+  }
+  private async inference(payload: InterpretRequest, signal: AbortSignal, mode: 'interpret' | 'summary'): Promise<InterpretResponse | FormSummary> {
     if (this.interpretationController) throw new InterpretationError('interpretation-busy')
     const controller = new AbortController()
     this.interpretationController = controller
@@ -170,9 +176,9 @@ export class ConnectionManager {
       await this.prepare()
       const session = await this.saved()
       if (!session || session.pendingRevocation || this.now() >= session.expiresAt) throw new InterpretationError('session-expired')
-      const body = JSON.stringify(payload)
+      const body = JSON.stringify(mode === 'summary' ? { scanId: payload.scanId, fields: payload.fields } : payload)
       if (new TextEncoder().encode(body).length > 131072) throw new InterpretationError('body_too_large')
-      const response = await this.http(`${SERVICE_ORIGIN}/v1/interpret`, {
+      const response = await this.http(`${SERVICE_ORIGIN}/v1/${mode}`, {
         method: 'POST', body, headers: { Authorization: `Bearer ${session.token}`, 'X-Piko-Extension-Origin': session.origin, 'Content-Type': 'application/json' },
         signal: controller.signal, cache: 'no-store', credentials: 'omit', redirect: 'error', mode: 'cors',
       })
@@ -203,11 +209,11 @@ export class ConnectionManager {
         if (isRecord(value) && hasKeys(value, ['error']) && (interpretationErrors as readonly unknown[]).includes(value.error)) throw new InterpretationError(value.error as InterpretationError['code'])
         throw new InterpretationError('invalid-response')
       }
-      if (!isInterpretResponse(value, payload)) throw new InterpretationError('invalid-response')
+      if (!(mode === 'summary' ? isFormSummary(value, payload.scanId) : isInterpretResponse(value, payload))) throw new InterpretationError('invalid-response')
       const current = await this.saved()
       if (!current || current.token !== session.token || current.pendingRevocation || this.now() >= current.expiresAt) throw new InterpretationError('session-expired')
       if (controller.signal.aborted) throw new InterpretationError('request-cancelled')
-      return value
+      return value as InterpretResponse | FormSummary
     } catch (error) {
       if (error instanceof InterpretationError) throw error
       throw new InterpretationError(controller.signal.aborted ? signal.aborted ? 'request-cancelled' : 'interpretation-timeout' : 'service-unavailable')
@@ -226,9 +232,10 @@ export class ConnectionManager {
       // the token and rejects disagreement with any browser-supplied Origin.
       const headers: Record<string, string> = { 'X-Piko-Extension-Origin': chrome.runtime.getURL('').replace(/\/$/, '') }
       if (token) headers.Authorization = `Bearer ${token}`
-      if (code !== undefined) headers['Content-Type'] = 'application/json'
+      if (path === '/pair' || code !== undefined) headers['Content-Type'] = 'application/json'
+      const requestBody = path === '/pair' ? JSON.stringify({ protocol_version: 1, ...(code !== undefined ? { code } : {}) }) : undefined
       const response = await this.http(`${SERVICE_ORIGIN}/v1${path}`, {
-        method, headers, ...(code === undefined ? {} : { body: JSON.stringify({ protocol_version: 1, code }) }),
+        method, headers, ...(requestBody ? { body: requestBody } : {}),
         signal: controller.signal, credentials: 'omit', cache: 'no-store', redirect: 'error', mode: 'cors',
       })
       if (response.status === 401) failed(path === '/pair' ? 'pairing-rejected' : 'session-expired')
@@ -347,3 +354,4 @@ export class ConnectionManager {
     } finally { this.busy = false }
   }
 }
+import { isFormSummary, type FormSummary, type SummaryRequest } from '../features/assistant/form-summary'

@@ -116,3 +116,9 @@ test('actual client uses bounded JSON/Base64 chunks and waits for every acknowle
   assert.deepEqual(response, result); assert.deepEqual(messages.map(message => message.type), ['begin', 'chunk', 'chunk', 'commit']);
   assert.ok(messages.filter(message => message.type === 'chunk').every(message => message.data.length <= 65536));
 });
+test('quiet speech and natural pauses are retained before automatic stop',()=>{
+ let now=0,rms=0,stopped=0,tick,closed=0,disconnected=0;
+ class AudioContextFixture{createMediaStreamSource(){return{connect(){},disconnect(){disconnected++;}};}createAnalyser(){return{fftSize:0,getFloatTimeDomainData(samples){samples.fill(rms);},disconnect(){disconnected++;}};}async resume(){}async close(){closed++;}}
+ const loadSilence=createLoader({AudioContext:AudioContextFixture,performance:{now:()=>now},setInterval:callback=>{tick=callback;return 1;},clearInterval:()=>{tick=null;}}),{watchSilence}=loadSilence(path.join(root,'features/voice-input/silence-detector.ts'));
+ const cleanup=watchSilence({},()=>stopped++);tick();now=500;rms=0.008;tick();rms=0;now=2600;tick();assert.equal(stopped,0);now=3101;tick();assert.equal(stopped,1);cleanup();assert.equal(closed,1);assert.equal(disconnected,2);assert.equal(tick,null);
+});

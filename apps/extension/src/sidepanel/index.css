@@ -7,7 +7,13 @@
 
 @layer components {
   .primary-action {
-    @apply min-h-11 w-full bg-emerald-950 text-white hover:bg-emerald-900;
+    @apply min-h-11 w-full bg-emerald-900 text-white hover:bg-emerald-800 transition-all duration-200 active:scale-[0.99] font-medium shadow-sm hover:shadow rounded-xl;
+  }
+  .piko-card {
+    @apply rounded-2xl border border-emerald-950/10 bg-white/95 shadow-sm transition-shadow backdrop-blur-sm p-4;
+  }
+  .piko-card-interactive {
+    @apply rounded-2xl border border-emerald-950/10 bg-white/95 shadow-sm backdrop-blur-sm p-4 hover:border-emerald-950/20 hover:shadow-md transition-all duration-200;
   }
 }
 
@@ -131,7 +137,8 @@
     @apply bg-background text-foreground;
     margin: 0;
     min-width: 280px;
-    background: #f5f7f4;
+    background: radial-gradient(ellipse at 50% 0%, #f0fdf4 0%, #f6f8f6 100%);
+    min-height: 100vh;
     }
   html {
     @apply font-sans;

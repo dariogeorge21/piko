@@ -14,7 +14,7 @@ export interface ConnectionState {
 }
 export type ConnectionRequest = { requestId: string } & (
   | { type: 'PIKO_SERVICE_STATUS' | 'PIKO_SERVICE_HEALTH' | 'PIKO_SERVICE_PING' | 'PIKO_SERVICE_CAPABILITIES' | 'PIKO_SERVICE_DISCONNECT' }
-  | { type: 'PIKO_SERVICE_PAIR'; code: string }
+  | { type: 'PIKO_SERVICE_PAIR'; code?: string }
 )
 export interface ConnectionResponse { requestId: string; ok: boolean; state: ConnectionState }
 export const initialConnection: ConnectionState = { status: 'disconnected', checkedAt: null, expiresAt: null, capabilities: null, error: null, disconnectPending: false }

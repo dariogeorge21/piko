@@ -1,37 +1,66 @@
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import type { ConnectionState } from './connection.types'
 import type { ConnectionAction } from './connection.service'
 
 export function PairingPanel({ state, busy, act }: { state: ConnectionState; busy: boolean; act: (action: ConnectionAction) => Promise<void> }) {
-  const [code, setCode] = useState('')
-  const canPair = !busy && !state.disconnectPending && state.status !== 'paired' && /^[a-f0-9]{16}$/.test(code)
-  return <details className="rounded-lg border bg-white/60 p-3 text-xs">
-    <summary className="cursor-pointer font-medium">Local service connection</summary>
-    <div className="mt-3 space-y-3">
-      <p>Service: <code>127.0.0.1:8765</code>. Start the companion service and copy its 16-character pairing code. Codes expire after 5 minutes and work once.</p>
-      <Button variant="outline" className="min-h-10 w-full" disabled={busy} onClick={() => void act({ type: 'PIKO_SERVICE_HEALTH' })}>{state.disconnectPending ? 'Retry pending disconnect' : 'Check service'}</Button>
-      <form className="space-y-2" onSubmit={(event) => {
-        event.preventDefault()
-        if (!canPair) return
-        const submitted = code
-        setCode('')
-        void act({ type: 'PIKO_SERVICE_PAIR', code: submitted })
-      }}>
-        <label htmlFor="pairing-code">Temporary pairing code</label>
-        <Input id="pairing-code" type="password" autoComplete="off" spellCheck={false} maxLength={16} value={code} disabled={busy || state.status === 'paired' || state.disconnectPending} onChange={(event) => setCode(event.target.value.trim())} />
-        <Button className="min-h-10 w-full" type="submit" disabled={!canPair}>Pair extension</Button>
-      </form>
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" disabled={busy || state.status !== 'paired'} onClick={() => void act({ type: 'PIKO_SERVICE_PING' })}>Authenticated ping</Button>
-        <Button variant="outline" disabled={busy || state.status !== 'paired'} onClick={() => void act({ type: 'PIKO_SERVICE_CAPABILITIES' })}>Check capabilities</Button>
+  const isConnected = state.status === 'paired'
+
+  return <details className="rounded-xl border border-emerald-950/15 bg-white/90 shadow-2xs p-3.5 text-xs transition-all group">
+    <summary className="cursor-pointer font-medium select-none flex items-center justify-between text-emerald-950 hover:text-emerald-800">
+      <span className="flex items-center gap-2">
+        <span className={`size-2 rounded-full ${isConnected ? 'bg-emerald-600' : 'bg-amber-500'}`} />
+        Local service connection
+      </span>
+      <span className="text-[10px] font-normal text-muted-foreground">{isConnected ? 'Connected' : 'Disconnected'}</span>
+    </summary>
+    <div className="mt-3.5 space-y-3 pt-3 border-t border-emerald-950/10">
+      <div className="rounded-lg bg-emerald-950/5 p-2.5 text-[11px] leading-5 text-emerald-950">
+        <p>Service: <code className="bg-white/80 px-1 py-0.5 rounded font-mono text-emerald-900">127.0.0.1:8765</code>. Direct connection (no pairing code required).</p>
       </div>
-      <Button variant="outline" className="min-h-10 w-full" disabled={busy} onClick={() => { setCode(''); void act({ type: 'PIKO_SERVICE_DISCONNECT' }) }}>Disconnect service</Button>
-      {state.capabilities && <ul aria-label="Local service capabilities" className="space-y-1"><li>Inference: {state.capabilities.inference.replace('_', ' ')}</li><li>Transcription: {state.capabilities.transcription.replace('_', ' ')}</li><li>Speech synthesis: {state.capabilities.speech_synthesis.replace('_', ' ')}</li></ul>}
-      {state.checkedAt !== null && <p>Last verified: {new Date(state.checkedAt).toLocaleTimeString()}</p>}
-      {state.expiresAt !== null && <p>Session expires: {new Date(state.expiresAt).toLocaleString()}</p>}
-      <p>Sessions expire after 12 hours and are invalidated by a service restart. Restart the service to obtain a new code after disconnecting. Only explicitly recorded audio is uploaded for transcription. Clicking Interpret sends your edited answer and eligible field metadata to the local companion. Play aloud sends the visible assistant message for local speech generation. No cloud inference is used.</p>
+
+      {!isConnected ? (
+        <Button
+          className="min-h-10 w-full primary-action text-sm"
+          disabled={busy || state.disconnectPending}
+          onClick={() => void act({ type: 'PIKO_SERVICE_PAIR' })}
+        >
+          {busy ? 'Connecting…' : 'Connect to companion'}
+        </Button>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="flex-1 bg-white text-xs min-h-9" disabled={busy} onClick={() => void act({ type: 'PIKO_SERVICE_PING' })}>Ping service</Button>
+          <Button variant="outline" className="flex-1 bg-white text-xs min-h-9" disabled={busy} onClick={() => void act({ type: 'PIKO_SERVICE_CAPABILITIES' })}>Check capabilities</Button>
+        </div>
+      )}
+
+      <Button
+        variant="outline"
+        className="min-h-10 w-full bg-white hover:bg-emerald-50 text-emerald-950 font-medium transition-colors"
+        disabled={busy}
+        onClick={() => void act({ type: 'PIKO_SERVICE_HEALTH' })}
+      >
+        {state.disconnectPending ? 'Retry pending disconnect' : 'Check service health'}
+      </Button>
+
+      {isConnected && (
+        <Button
+          variant="outline"
+          className="min-h-9 w-full bg-white text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/5"
+          disabled={busy}
+          onClick={() => void act({ type: 'PIKO_SERVICE_DISCONNECT' })}
+        >
+          Disconnect service
+        </Button>
+      )}
+
+      {state.capabilities && <ul aria-label="Local service capabilities" className="space-y-1.5 rounded-lg bg-emerald-950/5 p-2.5 text-[11px]">
+        <li className="flex justify-between font-medium"><span>Inference:</span> <span className="capitalize text-emerald-900">{state.capabilities.inference.replace('_', ' ')}</span></li>
+        <li className="flex justify-between font-medium"><span>Transcription:</span> <span className="capitalize text-emerald-900">{state.capabilities.transcription.replace('_', ' ')}</span></li>
+        <li className="flex justify-between font-medium"><span>Speech synthesis:</span> <span className="capitalize text-emerald-900">{state.capabilities.speech_synthesis.replace('_', ' ')}</span></li>
+      </ul>}
+
+      {state.checkedAt !== null && <p className="text-[10px] text-muted-foreground">Last verified: {new Date(state.checkedAt).toLocaleTimeString()}</p>}
+      <p className="text-[10px] leading-4 text-muted-foreground border-t border-emerald-950/5 pt-2">Direct connection connects directly to your local companion service without security codes. Only explicitly recorded audio is uploaded for transcription. Clicking Interpret sends your edited answer and eligible field metadata to the local companion. Play aloud sends the visible assistant message for local speech generation. No cloud inference is used.</p>
     </div>
   </details>
 }

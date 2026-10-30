@@ -12,7 +12,7 @@
     "test:skeleton": "node tests/extension.test.cjs",
     "test:browser": "playwright test",
     "test:ui": "node tests/assistant-reducer.test.cjs",
-    "test": "npm run test:contracts && npm run test:skeleton && npm run test:ui && npm run test:scanner && npm run test:filling && npm run test:connection && npm run test:voice && npm run test:interpretation && npm run test:speech && npm run test:workflow",
+    "test": "npm run test:contracts && npm run test:skeleton && npm run test:ui && npm run test:scanner && npm run test:filling && npm run test:connection && npm run test:voice && npm run test:interpretation && npm run test:speech && npm run test:workflow && npm run test:guided",
     "test:voice": "node --test tests/voice.test.cjs",
     "test:connection": "node --test tests/connection.test.cjs",
     "test:filling": "node --test tests/filling.test.cjs",
@@ -21,7 +21,10 @@
     "test:python": "apps/local-service/.venv/bin/python -m unittest discover -s tests -p 'test_*.py'",
     "benchmark:interpretation": "apps/local-service/.venv/bin/python scripts/benchmark-interpretation.py",
     "test:speech": "node --test tests/speech.test.cjs",
-    "test:workflow": "node --test tests/workflow.test.cjs"
+    "test:workflow": "node --test tests/workflow.test.cjs",
+    "test:guided": "node --test tests/guided.test.cjs",
+    "dev:service": "python3 scripts/run-companion.py",
+    "setup:voice": "python3 scripts/setup-voice.py"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

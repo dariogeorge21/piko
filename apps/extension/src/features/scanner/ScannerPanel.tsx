@@ -25,14 +25,20 @@ export function ScannerPanel() {
   const inventory = workflow.scan?.inventory
   const state = { stage: workflow.staleReason ? 'stale' : workflow.stage === 'scanning' ? 'loading' : workflow.stage === 'error' && !inventory ? 'error' : !inventory ? 'idle' : inventory.forms.some(form => form.fields.length) ? 'ready' : 'empty', message: workflow.staleReason ? 'This scan or session changed. Inspect again before continuing. Previous approvals cannot be reused.' : workflow.error ? workflowError(workflow.error) : '' }
   const fields = inventory?.forms.flatMap((form) => form.fields) ?? []
-  return <section aria-label="Read-only form scanner" className="space-y-4 rounded-xl border border-emerald-950/15 bg-white/60 p-3">
-    <div className="flex items-center gap-2"><ListFilter aria-hidden="true" className="size-4 text-emerald-800" /><h2 className="text-sm font-semibold">Inspect a real form</h2><Badge variant="outline" className="ml-auto">Read only</Badge></div>
+  return <section aria-label="Read-only form scanner" className="space-y-4 rounded-2xl border border-emerald-950/15 bg-white/95 shadow-sm p-4">
+    <div className="flex items-center gap-2">
+      <div className="flex size-7 items-center justify-center rounded-lg bg-emerald-950/10 text-emerald-900">
+        <ListFilter aria-hidden="true" className="size-4" />
+      </div>
+      <h2 className="text-sm font-semibold text-emerald-950">Inspect a real form</h2>
+      <Badge variant="outline" className="ml-auto bg-emerald-950/5 border-emerald-950/15 text-emerald-900 text-[10px]">Read only</Badge>
+    </div>
     <p className="text-xs leading-5 text-muted-foreground">Inspection starts a temporary conversation. Click Piko’s toolbar icon on the target tab first. Inspection reads labels, types, options, and constraints. Existing answers are never collected.</p>
-    <Button variant="outline" className="min-h-10 w-full" disabled={state.stage === 'loading' || workflow.stage === 'filling'} onClick={() => void controller.scan()}><Search aria-hidden="true" />{state.stage === 'loading' ? 'Inspecting…' : state.stage === 'idle' ? 'Inspect this page' : 'Inspect again'}</Button>
-    {workflow.scan && <p role="status" className="text-xs">Live workflow: {workflow.stage} · Questions → Review → Exact approval → Verified results</p>}
+    <Button variant="outline" className="min-h-11 w-full bg-emerald-900 hover:bg-emerald-800 text-white font-medium rounded-xl shadow-xs transition-all flex items-center justify-center gap-2" disabled={state.stage === 'loading' || workflow.stage === 'filling'} onClick={() => void controller.scan()}><Search aria-hidden="true" className="size-4" />{state.stage === 'loading' ? 'Inspecting…' : state.stage === 'idle' ? 'Inspect this page' : 'Inspect again'}</Button>
+    {workflow.scan && <p role="status" className="text-xs font-medium text-emerald-900 bg-emerald-50 px-2.5 py-1.5 rounded-lg border border-emerald-950/10">Live workflow: {workflow.stage} · Questions → Review → Exact approval → Verified results</p>}
     {state.stage === 'loading' && <div role="status" aria-label="Scanning page" aria-busy="true" className="space-y-2"><p className="text-xs">Reading field metadata…</p><Skeleton className="h-16 w-full motion-reduce:animate-none" /></div>}
     {state.stage === 'idle' && <p className="text-[11px] text-muted-foreground">No page inspected. Scanning begins only when you click.</p>}
-    {(state.stage === 'stale' || state.stage === 'error') && <Alert variant={state.stage === 'error' ? 'destructive' : 'default'}><TriangleAlert aria-hidden="true" className="size-4" /><AlertTitle>{state.stage === 'stale' ? 'Scan is stale' : 'Page could not be inspected'}</AlertTitle><AlertDescription className="text-xs leading-5">{state.message}</AlertDescription></Alert>}
+    {(state.stage === 'stale' || state.stage === 'error') && <Alert role={state.stage === 'stale' ? 'status' : 'alert'} variant={state.stage === 'error' ? 'destructive' : 'default'}><TriangleAlert aria-hidden="true" className="size-4" /><AlertTitle>{state.stage === 'stale' ? 'Scan is stale' : 'Page could not be inspected'}</AlertTitle><AlertDescription className="text-xs leading-5">{state.message}</AlertDescription></Alert>}
     {inventory && <>
       <div className="space-y-1"><p className="break-all text-xs font-medium">{inventory.origin}</p><p role="status" className="text-xs text-muted-foreground">{fields.length} supported fields · {fields.filter((field) => field.eligible).length} eligible · {inventory.forms.length} {inventory.forms.length === 1 ? 'form' : 'forms'}</p></div>
       {state.stage === 'empty' && <p className="text-sm">No supported visible fields were found. The page may use unsupported widgets or excluded controls.</p>}

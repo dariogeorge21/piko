@@ -7,7 +7,7 @@ export interface RegisteredField {
 }
 // Compare DOM identity and attributes, never collect current answers during scan.
 export function identity(element: Element): string {
-  const attributes = ['id', 'name', 'type', 'form', 'role', 'autocomplete', 'placeholder', 'aria-label', 'aria-labelledby', 'readonly', 'aria-readonly', 'required', 'aria-required', 'disabled', 'aria-disabled', 'multiple', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'class', 'style', 'hidden', 'inert', 'aria-hidden']
+  const attributes = ['id', 'name', 'type', 'form', 'role', 'autocomplete', 'placeholder', 'aria-label', 'aria-labelledby', 'readonly', 'aria-readonly', 'required', 'aria-required', 'disabled', 'aria-disabled', 'multiple', 'min', 'max', 'step', 'minlength', 'maxlength', 'pattern', 'hidden', 'inert', 'aria-hidden']
   if (element.tagName === 'OPTION') attributes.push('value', 'label')
   // Do not copy arbitrary page data-* attributes or default text answers.
   return JSON.stringify([element.tagName, attributes.map((name) => [name, element.getAttribute(name)])])

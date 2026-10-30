@@ -3,7 +3,12 @@ import type { Capabilities, ConnectionRequest, ConnectionState } from './connect
 
 export function isConnectionRequest(value: unknown): value is ConnectionRequest {
   if (!isRecord(value) || !isOpaqueId(value.requestId)) return false
-  if (value.type === 'PIKO_SERVICE_PAIR') return hasKeys(value, ['type', 'requestId', 'code']) && typeof value.code === 'string' && /^[a-f0-9]{16}$/.test(value.code)
+  if (value.type === 'PIKO_SERVICE_PAIR') {
+    if ('code' in value && value.code !== undefined) {
+      return hasKeys(value, ['type', 'requestId', 'code']) && typeof value.code === 'string' && /^[a-f0-9]{16}$/.test(value.code)
+    }
+    return hasKeys(value, ['type', 'requestId'])
+  }
   return hasKeys(value, ['type', 'requestId']) && typeof value.type === 'string' && ['PIKO_SERVICE_STATUS', 'PIKO_SERVICE_HEALTH', 'PIKO_SERVICE_PING', 'PIKO_SERVICE_CAPABILITIES', 'PIKO_SERVICE_DISCONNECT'].includes(value.type)
 }
 export function isCapabilities(value: unknown): value is Capabilities {
